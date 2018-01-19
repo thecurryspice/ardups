@@ -14,179 +14,19 @@ float outPower, maxPower;
 String inputString = "";
 boolean stringComplete, mainsOn;
 
-// Timer class to keep track of different timeouts
-class Timer
-{
-public:
-    Timer(int _timer)   // value in ms
-    {
-        timer = _timer;
-        setPoint = millis();
-        state = false;
-    }
-
-    ~Timer() {}
-
-    void update()
-    {
-        if(!timer)
-            return;
-        if(millis() - ticks > timer && !state)  // no toggling
-            state = true;
-    }
-    bool timeout()
-    {
-        if(!timer)
-            return false;
-        if(state)
-        {
-            state = false;  // state is reset only if checked.
-            return true;
-        }
-    }
-
-    void setTimer(int _timer)
-        timer = _timer;
-
-    uint64_t getTimer() const
-        return timer;
-
-    uint64_t ticksLeft() const  // ms left until next trigger
-    {
-        if(!timer)
-            return 0;
-        return (millis() - setPoint);
-    }
-
-private:
-    uint64_t setPoint, timer;
-    bool state;
-};
-
 // default Timer params
 Timer shutdown(0);
 Timer startup(0);
 
-// Class to calculate Rolling Average
-class RollAvg
-{
-public:
-    // total
-    RollAvg(int _totalReadings)
-        {int totalReadings = _totalReadings;}
-
-    void push(float value) const
-    {
-        for (int i = totalReadings-1; i > 0; --i)
-            readings[i] = readings[i-1];
-        readings[0] = value;
-    }
-    float getAvg()
-    {
-        for (int i = 0; i < totalReadings; --i)
-            sum += readings[i];
-        return float(sum/totalReadings);
-    }
-    void reset()
-    {
-        for (int i = 0; i < totalReadings; ++i)
-            readings[i] = 0;
-    }
-
-    void setTotalReadings(int _totalReadings)
-        {totalReadings = _totalReadings;}
-
-    int getTotalReadings()
-        return totalReadings;
-
-private:
-    int totalReadings;
-    int readings[totalReadings];
-};
-
 RollAvg avgPowerOut(255);
 RollAvg avgCurrent(255);
 
-// to manage output power
-class PowerDriver
-{
-public:
-    PowerDriver(uint8_t _pin)
-    {
-        pin = _pin;
-        pinMode(pin, OUTPUT);
-        drive = 255;
-    }
-    void update()
-    {
-        if(!maxPower)
-            return
-        if(millis() - setPoint > relax)
-        {
-            current =  CURRSENS;
-            supplyVolts = float(1609.7*SUPPLYVOLT*3.3)/1023;
-            outPower = (supplyVolts*current)/1000;
-            if(outPower > maxPower)
-            {
-                digitalWrite(DEMANDIND, HIGH);
-                // we don't want to lose CV condition, do we?
-                if(supplyVolts > 4800)
-                    drive--;
-            }
-            else
-            {
-                // this is needed to ensure that sharp spikes can be provided before toning down the output
-                // the drive values will keep oscillating between two points when limiting output power
-                // as soon as the output power drops, drive gradually turns fully on
-                digitalWrite(DEMANDIND, LOW);
-                drive = max(drive++,255);
-            }
-            MOSDRIVE(drive);
-        }
-    }
-    void limit(int _maxPower)
-        maxPower = _maxPower;
-    // higher slope means faster decrease
-    void setSlope(float _slope)
-    {
-        slope = _slope;
-        relax = constrain(100-(100/_slope), 5, 100); //set min and max correction time here
-    }
-private:
-    uint8_t pin, relax, drive;
-    uint64_t setPoint;
-    int maxPower;
-    float slope;
-};
-
 PowerDriver PowerDrive(MOSPIN);
-
-void setup()
-{
-    Serial.begin(115200);
-    pinMode(DEMANDIND, OUTPUT);
-    pinMode(MOSPIN, OUTPUT);
-    analogWrite(MOSPIN, 255);
-    inputString.reserve(50);
-}
-
-void loop()
-{
-    randomSeed(CURRPIN);
-    if(stringComplete)
-        manCli();
-    if(millis() - lastReadAt > measureTimer)
-    {
-        measure();
-        lastReadAt = millis();
-    }
-    PowerDrive.update();
-}
 
 // will run after every loop
 void serialEvent()
 {
-    while (Serial.available())
+    while(Serial.available())
     {
         char inChar = (char)Serial.read();
         inputString += inChar;
@@ -216,7 +56,7 @@ void manCli()
         Serial.println(F("shutdown <sec>    :   disrupts power after specified seconds"));
         Serial.println(F("startup <sec>     :   supplies power after specified seconds after shutdown"));
         Serial.println(F("limitPower <mW>   :   limits power to specified mW in CV mode"));
-        Serial.println(F("limitPowerSlope   :   determines slope of decrease in output power"));
+        Serial.println(F("responseTime <ms> :   determines update rate of output power control loop"));
         Serial.println(F("readInterv <ms>   :   sets interval between two readings"));
         Serial.println(F("dnd <bool>        :   turn off all indicator lights except mains"));
         //Serial.println(F("setTime <hh:mm>   :   set local time"));
@@ -304,7 +144,7 @@ void manCli()
         {
             uint8_t length = inputString.length();
             int secs = sdval + abs(startup((inputString.substring(8,length-1)).toInt()));
-            startup.setTimer(1000*secs)
+            startup.setTimer(1000*secs);
             Serial.println("Startup timer set");
         }
         else
@@ -317,27 +157,30 @@ void manCli()
         uint8_t length = inputString.length();
         int _maxPower = abs(startup((inputString.substring(11,length-1)).toInt()));
         if(!_maxPower)
-            Serial.println("Output Power Limit Disabled")
-        else if(_maxPower <= 12000)
         {
-            maxPower = _maxPower;
+            PowerDrive.setPowerLimit(12000);
+            Serial.println("Output Power Limit Disabled")
+        }
+        else if(_maxPower >= 3000 && _maxPower <= 12000)
+        {
+            PowerDrive.setPowerLimit(_maxPower);
             Serial.println("Output Power Limit Enabled");
         }
         else
-            Serial.println("Valid Range: 0 - 12000 mW");
+            Serial.println("Output Power Limit could not be enabled\nValid Range: 3000 - 12000 mW");
     }
 
-    // power decrease slope
-    else if((inputString.substring(0,14)).equalsIgnoringCase("limitPowerSlope"))
+    // update rate of output power control loop
+    else if((inputString.substring(0,14)).equalsIgnoringCase("setResponseTime"))
     {
         uint8_t length = inputString.length();
-        float _slope = abs(startup((inputString.substring(16,length-1)).toFloat()));
-        if(_slope <= 0 || _slope >= 1)
-            Serial.println("Valid Range: Float between 0 and 1")
+        float _responseTime = abs(startup((inputString.substring(16,length-1)).toInt()));
+        if(_responseTime < 3500 || _responseTime > 12000)
+            Serial.println("Valid Range: 3500 - 12000")
         else
         {
-            PowerDrive.setSlope(_slope);
-            Serial.println("Power Decrease Slope Changed");
+            PowerDrive.setResponseTime(_responseTime);
+            Serial.println("Response Time Set");
         }
     }
 
@@ -358,4 +201,27 @@ void manCli()
     // default
     else
         Serial.println("Unrecognised Command!");
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    pinMode(DEMANDIND, OUTPUT);
+    pinMode(MOSPIN, OUTPUT);
+    analogWrite(MOSPIN, 255);
+    inputString.reserve(50);
+}
+
+void loop()
+{
+    randomSeed(CURRPIN);
+    if(stringComplete)
+        manCli();
+    if(millis() - lastReadAt > measureTimer)
+    {
+        measure();
+        lastReadAt = millis();
+    }
+    PowerDrive.update();
+    serialEvent();
 }
