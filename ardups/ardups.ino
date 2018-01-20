@@ -23,6 +23,16 @@ RollAvg avgCurrent(255);
 
 PowerDriver PowerDrive(MOSPIN);
 
+// sets up a 31.25 kHz PWM on Timer2
+void setupFastPWM()
+{
+    // COM2x1 : Clear OC2x on Compare Match, set OC2x at BOTTOM
+    // WGM21|WGM20 : Fast PWM mode
+    TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
+    // prescalar selection
+    TCCR2B = _BV(CS20);
+}
+
 // will run after every loop
 void serialEvent()
 {
@@ -35,19 +45,23 @@ void serialEvent()
     }
 }
 
+// edits variables for one measure cycle (one loop)
 void measure()
 {
+    // update all variables
     current =  CURRSENS;
     battVolts = float(1609.7*BATTVOLT*3.3)/1023;
     supplyVolts = float(1609.7*SUPPLYVOLT*3.3)/1023;
 
     outPower = (supplyVolts*current)/1000;
     battCurrent = (supplyVolts*current)/battVolts;
-
+    
+    // update rolling averages
     avgCurrent.push(current);
     avgPowerOut.push(outPower);
 }
 
+// cli manager
 void manCli()
 {
     // help
@@ -205,6 +219,7 @@ void manCli()
 
 void setup()
 {
+    setupFastPWM();
     Serial.begin(115200);
     pinMode(DEMANDIND, OUTPUT);
     pinMode(MOSPIN, OUTPUT);
