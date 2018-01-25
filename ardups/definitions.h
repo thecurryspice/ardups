@@ -1,0 +1,10 @@
+#define MOSPIN 3
+#define BATTCHRGPIN 4
+#define DEMANDIND 8
+#define CURRPIN A0
+#define BATTVOLTPIN A1
+#define SUPPLYVOLTPIN A2
+#define CURRSENS analogRead(CURRPIN)
+#define BATTVOLT analogRead(BATTVOLTPIN)
+#define SUPPLYVOLT analogRead(SUPPLYVOLTPIN)
+#define MOSDRIVE(x) analogWrite(MOSPIN,x)

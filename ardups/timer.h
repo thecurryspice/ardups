@@ -1,8 +1,11 @@
 // Timer class to keep track of different timeouts
 class Timer
 {
+private:
+    uint64_t setPoint, timer;
+    bool state;
 public:
-    Timer(int _timer)   // value in ms
+    Timer(unsigned long _timer)   // value in ms
     {
         timer = _timer;
         setPoint = millis();
@@ -11,41 +14,46 @@ public:
 
     ~Timer() {}
 
+    // check whether the 
     void update()
     {
         if(!timer)
             return;
-        if(millis() - ticks > timer && !state)  // no toggling
+        if(millis() - setPoint > timer && !state)  // no toggling
+        {
+            return true;
             state = true;
+        }
+        else
+        {
+            state = false;
+            return false;
+        }
     }
+    
     bool timeout()
     {
         if(!timer)
             return false;
-        if(state)
-        {
-            state = false;  // state is reset only if checked.
-            return true;
-        }
+        update();
+        return state;
     }
 
-    void setTimer(int _timer)
+    void setTimer(unsigned long _timer)
     {
         timer = _timer;
         setPoint = millis();
     }
 
-    uint64_t getTimer() const
+    unsigned long getTimer() const
+    {
         return timer;
+    }
 
-    uint64_t ticksLeft() const  // ms left until next trigger
+    unsigned long ticksLeft() const  // ms left until next trigger
     {
         if(!timer)
             return 0;
         return (setPoint + timer - millis());
     }
-
-private:
-    uint64_t setPoint, timer;
-    bool state;
 };

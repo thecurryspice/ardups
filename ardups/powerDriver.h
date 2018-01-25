@@ -1,3 +1,4 @@
+# include "definitions.h"
 // Class to manage power drives
 class PowerDriver
 {
@@ -5,7 +6,7 @@ private:
     uint8_t pin, responseTime, drive;
     uint64_t setPoint;
     int maxPower;
-    float slope;
+    bool showIndicator = true;
 public:
     PowerDriver(uint8_t _pin, uint8_t responseTime, int _maxPower)
     {
@@ -19,12 +20,13 @@ public:
             return;
         if(millis() - setPoint > responseTime)
         {
-            current =  CURRSENS;
-            supplyVolts = float(1609.7*SUPPLYVOLT*3.3)/1023;
-            outPower = (supplyVolts*current)/1000;
+            int current =  CURRSENS;
+            int supplyVolts = float(1609.7*SUPPLYVOLT*3.3)/1023;
+            int outPower = (supplyVolts*current)/1000;
             if(outPower > maxPower)
             {
-                digitalWrite(DEMANDIND, HIGH);
+                if(showIndicator)
+                    digitalWrite(DEMANDIND, HIGH);
                 // we don't want to lose CV condition, do we?
                 if(supplyVolts > 4800)
                     drive--;
@@ -43,7 +45,7 @@ public:
     }
     
     // max power in mW
-    void limit(int _maxPower)
+    void setPowerLimit(int _maxPower)
     {
         maxPower = _maxPower;
     }
@@ -52,5 +54,11 @@ public:
     void setResponseTime(float _responseTime)
     {
         responseTime = constrain(_responseTime,5,100);
+    }
+
+    // whether to use indicator or not
+    void indicator(bool _showIndicator)
+    {
+        showIndicator = _showIndicator;
     }
 };

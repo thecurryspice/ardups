@@ -1,15 +1,10 @@
-#define MOSPIN 3
-#define BATTCHRGPIN 4
-#define DEMANDIND 8
-#define CURRPIN A0
-#define BATTVOLTPIN A1
-#define SUPPLYVOLTPIN A2
-#define CURRSENS analogRead(CURRPIN)
-#define BATTVOLT analogRead(BATTVOLTPIN)
-#define SUPPLYVOLT analogRead(SUPPLYVOLTPIN)
-#define MOSDRIVE(x) analogWrite(MOSPIN,x)
+#include "powerDriver.h"
+#include "rollAvg.h"
+#include "timer.h"
+#include "definitions.h"
 
 int current, battVolts, supplyVolts, battCurrent, measureTimer = 1000;
+uint64_t lastReadAt = 0;
 float outPower, maxPower;
 String inputString = "";
 boolean stringComplete, mainsOn;
@@ -18,19 +13,31 @@ boolean stringComplete, mainsOn;
 Timer shutdown(0);
 Timer startup(0);
 
-RollAvg avgPowerOut(255);
-RollAvg avgCurrent(255);
+RollAvg avgPowerOut;
+RollAvg avgCurrent;
 
-PowerDriver PowerDrive(MOSPIN);
+PowerDriver PowerDrive(MOSPIN, 10, 12000);
 
 // sets up a 31.25 kHz PWM on Timer2
-void setupFastPWM()
+void setupFastPWM(uint8_t n)
 {
+    // invert PWM
+    n = 255-n;
+    Serial.print("Resetting PWM frequency to ");
+    // n/2 + 1 gives the time period in us
+    Serial.print(String(1000.0/(float(n/2)+1)));
+    Serial.print(" kHz...");
     // COM2x1 : Clear OC2x on Compare Match, set OC2x at BOTTOM
     // WGM21|WGM20 : Fast PWM mode
     TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
-    // prescalar selection
-    TCCR2B = _BV(CS20);
+    // count upto OCR2x
+    // prescalar 8
+    TCCR2B = _BV(WGM22) | _BV(CS21);
+    OCR2A =  n;
+    OCR2B = ((n + 1) / 2) - 1;
+    // give some time for PWM to stabilise
+    delay(50);
+    Serial.println("Done!");
 }
 
 // will run after every loop
@@ -38,10 +45,21 @@ void serialEvent()
 {
     while(Serial.available())
     {
+        // some delay is necessary, otherwise the received command might break up into characters
+        delay(50);
         char inChar = (char)Serial.read();
-        inputString += inChar;
+        // using newline as delimiter
         if (inChar == '\n')
-        stringComplete = true;
+        {
+            stringComplete = true;
+            break;
+        }
+        inputString += inChar;
+    }
+    if(inputString == "")
+    {
+        // if it was just a 'return' key, don't mark inputString as complete
+        stringComplete = false;
     }
 }
 
@@ -50,39 +68,54 @@ void measure()
 {
     // update all variables
     current =  CURRSENS;
-    battVolts = float(1609.7*BATTVOLT*3.3)/1023;
-    supplyVolts = float(1609.7*SUPPLYVOLT*3.3)/1023;
+    // keep this format to not let the register value exceed the maximum float value
+    battVolts = float(1609.7*3.3/1023)*BATTVOLT;
+    supplyVolts = float(1609.7*3.3/1023)*SUPPLYVOLT;
 
-    outPower = (supplyVolts*current)/1000;
-    battCurrent = (supplyVolts*current)/battVolts;
+    outPower = (float(supplyVolts)/1000)*current;
+    battCurrent = (float(supplyVolts)/battVolts)*current;
     
     // update rolling averages
     avgCurrent.push(current);
     avgPowerOut.push(outPower);
+    /*
+    Serial.print(current);
+    Serial.print("\t");
+    Serial.print(avgCurrent.getAvg());
+    Serial.print("\t");
+    Serial.println(avgCurrent.getSum());
+    Serial.print(outPower);
+    Serial.print("\t");
+    Serial.print(avgPowerOut.getAvg());
+    Serial.print("\t");
+    Serial.println(avgPowerOut.getSum());
+    */
 }
 
 // cli manager
 void manCli()
 {
     // help
-    if(inputString.equalsIgnoringCase("help") || inputString.equals("?"))
+    if(inputString.equalsIgnoreCase("help") || inputString.equals("?"))
     {
+        Serial.println(F("stats             :   show power metrics and statistics"));
+        Serial.println(F("config            :   show configuration"));
+        Serial.println(F("resetStats        :   reset all statistics"));
         Serial.println(F("shutdown <sec>    :   disrupts power after specified seconds"));
         Serial.println(F("startup <sec>     :   supplies power after specified seconds after shutdown"));
         Serial.println(F("limitPower <mW>   :   limits power to specified mW in CV mode"));
         Serial.println(F("responseTime <ms> :   determines update rate of output power control loop"));
         Serial.println(F("readInterv <ms>   :   sets interval between two readings"));
-        Serial.println(F("dnd <bool>        :   turn off all indicator lights except mains"));
+        Serial.println(F("dnd <on/off>      :   turn off all indicator lights except mains"));
+        Serial.println(F("PWMfreq <0-255>   :   sets switching frequency of the output driver"));
         //Serial.println(F("setTime <hh:mm>   :   set local time"));
         //Serial.println(F("setPwrAvgTime     :   set sample space (minutes) for average power"));
         //Serial.println(F("setCurrAvgTime    :   set sample space (minutes) for average current"));
-        Serial.println(F("stats             :   show power metrics and statistics"));
-        Serial.println(F("config            :   show configuration"));
         Serial.println(F("help <?>          :   display this message"));
     }
 
     // stats
-    else if(inputString.equalsIgnoringCase("stats"))
+    else if(inputString.equalsIgnoreCase("stats"))
     {
         Serial.print(F("Status: "));
         Serial.print(BATTCHRGPIN?"On Mains":"Discharging");
@@ -95,7 +128,7 @@ void manCli()
         Serial.print(F(" mW\nBattery Voltage: "));
         Serial.print(battVolts);
         Serial.print(F(" mV\nBattery Load: "));
-        Serial.print(battCurrent + random(0,50));
+        Serial.print(battCurrent);
         Serial.print(F(" mA\nAverage Power Supply: "));
         Serial.print(avgPowerOut.getAvg());
         Serial.print(F(" mW\nAverage Current Draw: "));
@@ -103,140 +136,186 @@ void manCli()
         Serial.println(F(" mA"));
     }
 
+    // resetStats
+    else if((inputString.substring(0,10)).equalsIgnoreCase("resetStats"))
+    {
+        avgPowerOut.reset();
+        avgCurrent.reset();
+    }
+
     // config
-    else if(inputString.equalsIgnoringCase("config"))
+    else if(inputString.equalsIgnoreCase("config"))
     {
         // shutdown schedule
         uint64_t timeToSD = shutdown.ticksLeft();
-        String outString = "";
-        if(!timeToSD)
+        //Serial.println(timeToSD);
+        // for storing output message
+        String outString;
+        if(timeToSD)
         {
             int hrs = timeToSD/3600000;
             int mins = (timeToSD % 3600000)/60000;
             int secs = (timeToSD % 60000)/1000;
             int ms = timeToSD % 1000;
-            outString = "Scheduled for "+String(hrs)+"h "+String(mins)+"m "+String(secs)+"."+String(ms)+"s from now"
+            outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
         }
         Serial.print(F("Shutdown: "));
-        Serial.print((timeToSD == 0) ?"Not Scheduled":outString);
+        Serial.print((timeToSD == 0) ?"Not Scheduled\n":outString);
         // startup schedule
-        timeToSU = startup.ticksLeft();
-        timeToSD += timeToSU;
-        String outString = "";
-        if(!timeToSU)
+        uint64_t timeToSU = startup.ticksLeft();
+        timeToSU += timeToSD;
+        if(timeToSU)
         {
-            int hrs = timeToSD/3600000;
-            int mins = (timeToSD % 3600000)/60000;
-            int secs = (timeToSD % 60000)/1000;
-            int ms = timeToSD % 1000;
-            outString = "Scheduled for "+String(hrs)+"h "+String(mins)+"m "+String(secs)+"."+String(ms)+"s from now"
+            int hrs = timeToSU/3600000;
+            int mins = (timeToSU % 3600000)/60000;
+            int secs = (timeToSU % 60000)/1000;
+            int ms = timeToSU % 1000;
+            outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
         }
         Serial.print(F("Startup: "));
-        Serial.print((timeToSU == 0) ?"Not Scheduled":outString);
+        Serial.print((timeToSU == 0) ?"Not Scheduled\n":outString);
         // measure interval
-        Serial.print(F("\nMonitoring Interval: "));
+        Serial.print(F("Monitoring Interval: "));
         Serial.print(measureTimer);
-        Serial.print(F("milliseconds\nPower Limiting: "));
+        Serial.print(F(" ms\nPower Limiting: "));
         // Power limiting
-        Serial.print((maxPower)?("Enabled: ")+String(maxPower)+(" mW"):"Disabled");
+        Serial.println((maxPower)?("Enabled: ")+String(maxPower)+(" mW"):"Disabled");
     }
 
     // shutdown
-    else if((inputString.substring(0,7)).equalsIgnoringCase("shutdown"))
+    else if((inputString.substring(0,8)).equalsIgnoreCase("shutdown"))
     {
+        uint64_t secs = 0;
         uint8_t length = inputString.length();
-        int secs = abs((inputString.substring(9,length-1)).toInt());
+        secs = abs((inputString.substring(9,length)).toInt());
         shutdown.setTimer(1000*secs);
+        Serial.println("Shutdown timer set");
     }
 
     // startup
-    else if((inputString.substring(0,6)).equalsIgnoringCase("startup"))
+    else if((inputString.substring(0,7)).equalsIgnoreCase("startup"))
     {
-        sdval = shutdown.getTimer();
         // check whether shutdown has been scheduled
-        if(sdval != 0)
+        if(shutdown.ticksLeft())
         {
             uint8_t length = inputString.length();
-            int secs = sdval + abs(startup((inputString.substring(8,length-1)).toInt()));
-            startup.setTimer(1000*secs);
-            Serial.println("Startup timer set");
+            uint64_t secs = abs((inputString.substring(8,length).toInt()));
+            startup.setTimer(1000*secs + shutdown.ticksLeft());
+            Serial.println(F("Startup timer set"));
         }
         else
-            Serial.println("Set Shutdown timer first");
+            Serial.println(F("Set Shutdown timer first"));
     }
 
     // power limiting
-    else if((inputString.substring(0,9)).equalsIgnoringCase("limitPower"))
+    else if((inputString.substring(0,10)).equalsIgnoreCase("limitPower"))
     {
         uint8_t length = inputString.length();
-        int _maxPower = abs(startup((inputString.substring(11,length-1)).toInt()));
+        int _maxPower = abs((inputString.substring(11,length).toInt()));
         if(!_maxPower)
         {
             PowerDrive.setPowerLimit(12000);
-            Serial.println("Output Power Limit Disabled")
+            Serial.println(F("Output Power Limit Disabled"));
         }
         else if(_maxPower >= 3000 && _maxPower <= 12000)
         {
             PowerDrive.setPowerLimit(_maxPower);
-            Serial.println("Output Power Limit Enabled");
+            Serial.println(F("Output Power Limit Enabled"));
         }
         else
-            Serial.println("Output Power Limit could not be enabled\nValid Range: 3000 - 12000 mW");
+            Serial.println(F("Output Power Limit could not be enabled\nValid Range: 3000 - 12000 mW"));
     }
 
     // update rate of output power control loop
-    else if((inputString.substring(0,14)).equalsIgnoringCase("setResponseTime"))
+    else if((inputString.substring(0,15)).equalsIgnoreCase("responseTime"))
     {
         uint8_t length = inputString.length();
-        float _responseTime = abs(startup((inputString.substring(16,length-1)).toInt()));
+        float _responseTime = abs((inputString.substring(16,length).toInt()));
         if(_responseTime < 3500 || _responseTime > 12000)
-            Serial.println("Valid Range: 3500 - 12000")
+            Serial.println(F("Valid Range: 3500 - 12000"));
         else
         {
             PowerDrive.setResponseTime(_responseTime);
-            Serial.println("Response Time Set");
+            Serial.println(F("Response Time Set"));
         }
     }
 
     // measure interval
-    else if((inputString.substring(0,9)).equalsIgnoringCase("readInterv"))
+    else if((inputString.substring(0,10)).equalsIgnoreCase("readInterv"))
     {
         uint8_t length = inputString.length();
-        float _measureTimer = abs(startup((inputString.substring(11,length-1)).toInt()));
+        float _measureTimer = abs((inputString.substring(11,length).toInt()));
         if(_measureTimer < 250)
-            Serial.println("Valid Range: Above 250 milliseconds")
+            Serial.println(F("Valid Range: Above 250 milliseconds"));
         else
         {
             measureTimer = _measureTimer;
-            Serial.println("Reading Interval Changed");
+            Serial.println(F("Reading Interval Changed"));
+        }
+    }
+
+    // set switching frequency
+    else if((inputString.substring(0,7)).equalsIgnoreCase("PWMfreq"))
+    {
+        Serial.println(F("Warning!\nChanging these values can result in unexpected instability.\nProceed with caution."));
+        Serial.println(F("High frequency ==> Decreased Efficiency, Increased Stability"));
+        Serial.println(F("Low frequency ==> Increased Efficiency, Decreased Stability"));
+        uint8_t length = inputString.length();
+        int n = abs((inputString.substring(8,length)).toInt());
+        setupFastPWM(constrain(n, 0, 255));
+    }
+
+    // dnd
+    else if((inputString.substring(0,3)).equalsIgnoreCase("dnd"))
+    {
+        // the actual use of this function is to disable interrupts being sent over to the Pi.
+        // there are no interrupts right now.
+        uint8_t length = inputString.length();
+        if((inputString.substring(4,length)).equalsIgnoreCase("on"))
+        {
+            PowerDrive.indicator(false);
+            Serial.println("DND Enabled");
+        }
+        if((inputString.substring(4,length)).equalsIgnoreCase("off"))
+        {
+            PowerDrive.indicator(true);
+            Serial.println("DND Disabled");
         }
     }
 
     // default
     else
-        Serial.println("Unrecognised Command!");
+        Serial.println(F("Unrecognised Command!"));
+
+    // leave a one line space
+    Serial.println();
 }
 
 void setup()
 {
-    setupFastPWM();
     Serial.begin(115200);
     pinMode(DEMANDIND, OUTPUT);
     pinMode(MOSPIN, OUTPUT);
+    setupFastPWM(0);
     analogWrite(MOSPIN, 255);
     inputString.reserve(50);
 }
 
 void loop()
 {
-    randomSeed(CURRPIN);
     if(stringComplete)
+    {
+        Serial.print(">>");
+        Serial.println(inputString);
         manCli();
+    }
     if(millis() - lastReadAt > measureTimer)
     {
         measure();
         lastReadAt = millis();
     }
     PowerDrive.update();
+    inputString = "";
+    stringComplete = false;
     serialEvent();
 }

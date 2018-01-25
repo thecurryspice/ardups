@@ -1,36 +1,50 @@
 // Class to calculate Rolling Average
 class RollAvg
 {
+private:
+    int totalReadings = 256;
+    int readings[256];
+    uint32_t sumReadings = 0;
 public:
     // total
+/*
     RollAvg(int _totalReadings)
         {int totalReadings = _totalReadings;}
+*/
+    RollAvg(){}
 
-    void push(float value) const
+    //void setValue(uint8_t _index, int value)
+    void push(float value)
     {
-        for (int i = totalReadings-1; i > 0; --i)
+        for (int i = totalReadings-1; i > 0; i--)
             readings[i] = readings[i-1];
         readings[0] = value;
     }
     float getAvg()
     {
-        for (int i = 0; i < totalReadings; --i)
-            sum += readings[i];
-        return float(sum/totalReadings);
+        sumReadings = 0.0;
+        for (int i = 0; i < totalReadings; i++)
+            sumReadings += readings[i];
+        return (float(sumReadings)/totalReadings);
     }
     void reset()
     {
-        for (int i = 0; i < totalReadings; ++i)
+        for (int i = 0; i < totalReadings; i++)
             readings[i] = 0;
     }
-
+    uint32_t getSum()
+    {
+        sumReadings = 0;
+        for (int i = 0; i < totalReadings; i++)
+            sumReadings += readings[i];
+        return sumReadings;
+    }
+/*
     void setTotalReadings(int _totalReadings)
         {totalReadings = _totalReadings;}
-
-    int getTotalReadings()
+*/
+    int getTotalReadings() const
+    {
         return totalReadings;
-
-private:
-    int totalReadings;
-    int readings[totalReadings];
+    }
 };
