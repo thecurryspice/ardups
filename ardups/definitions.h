@@ -1,10 +1,12 @@
 #define MOSPIN 3
 #define BATTCHRGPIN 4
-#define DEMANDIND 8
+#define CONSTVOLT 13
 #define CURRPIN A0
 #define BATTVOLTPIN A1
 #define SUPPLYVOLTPIN A2
 #define CURRSENS analogRead(CURRPIN)
 #define BATTVOLT analogRead(BATTVOLTPIN)
 #define SUPPLYVOLT analogRead(SUPPLYVOLTPIN)
-#define MOSDRIVE(x) analogWrite(MOSPIN,x)
+
+
+// DEMANDIND is actually switching of free-running to CV mode

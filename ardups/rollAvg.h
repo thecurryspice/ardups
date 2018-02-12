@@ -2,8 +2,8 @@
 class RollAvg
 {
 private:
-    int totalReadings = 256;
-    int readings[256];
+    uint8_t totalReadings = 64;
+    uint32_t readings[64];
     uint32_t sumReadings = 0;
 public:
     // total

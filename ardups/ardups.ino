@@ -19,25 +19,58 @@ RollAvg avgCurrent;
 PowerDriver PowerDrive(MOSPIN, 10, 12000);
 
 // sets up a 31.25 kHz PWM on Timer2
-void setupFastPWM(uint8_t n)
+void setupFastPWM(uint16_t n)
 {
-    // invert PWM
-    n = 255-n;
-    Serial.print("Resetting PWM frequency to ");
-    // n/2 + 1 gives the time period in us
-    Serial.print(String(1000.0/(float(n/2)+1)));
-    Serial.print(" kHz...");
     // COM2x1 : Clear OC2x on Compare Match, set OC2x at BOTTOM
     // WGM21|WGM20 : Fast PWM mode
     TCCR2A = _BV(COM2A1) | _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
-    // count upto OCR2x
-    // prescalar 8
-    TCCR2B = _BV(WGM22) | _BV(CS21);
-    OCR2A =  n;
-    OCR2B = ((n + 1) / 2) - 1;
+    
+    if(n == 1)
+    {
+        // clear preescalar bits
+        TCCR2B &= 0b11111000;
+        // prescalar 1
+        TCCR2B |= 0b00000001;
+        n = 1;
+    }
+    else if(n == 2)
+    {
+        // clear preescalar bits
+        TCCR2B &= 0b11111000;
+        // prescalar 8
+        TCCR2B |= 0b00000010;
+        n = 8;
+    }
+    else if(n == 3)
+    {
+        // clear preescalar bits
+        TCCR2B &= 0b11111000;
+        // prescalar 64
+        TCCR2B |= 0b00000011;
+        n = 64;
+    }
+    else if(n == 4)
+    {
+        // clear preescalar bits
+        TCCR2B &= 0b11111000;
+        // prescalar 256
+        TCCR2B |= 0b00000100;
+        n = 256;
+    }
+    else if(n == 5)
+    {
+        // clear preescalar bits
+        TCCR2B &= 0b11111000;
+        // prescalar 1024
+        TCCR2B |= 0b00000101;
+        n = 1024;
+    }
+    Serial.print("Setting PWM frequency to ");
+    // n/2 + 1 gives the time period in us
+    Serial.print(String(62500.0/n));
+    Serial.println(" Hz");
     // give some time for PWM to stabilise
-    delay(50);
-    Serial.println("Done!");
+    delay(1);
 }
 
 // will run after every loop
@@ -64,10 +97,10 @@ void serialEvent()
 }
 
 // edits variables for one measure cycle (one loop)
-void measure()
+void measure(bool printReadings)
 {
     // update all variables
-    current =  CURRSENS;
+    current =  CURRSENS*2.2;
     // keep this format to not let the register value exceed the maximum float value
     battVolts = float(1609.7*3.3/1023)*BATTVOLT;
     supplyVolts = float(1609.7*3.3/1023)*SUPPLYVOLT;
@@ -78,18 +111,29 @@ void measure()
     // update rolling averages
     avgCurrent.push(current);
     avgPowerOut.push(outPower);
-    /*
-    Serial.print(current);
-    Serial.print("\t");
-    Serial.print(avgCurrent.getAvg());
-    Serial.print("\t");
-    Serial.println(avgCurrent.getSum());
-    Serial.print(outPower);
-    Serial.print("\t");
-    Serial.print(avgPowerOut.getAvg());
-    Serial.print("\t");
-    Serial.println(avgPowerOut.getSum());
-    */
+    
+    if(printReadings)
+    {
+        Serial.print(F("Battery Voltage: "));
+        Serial.print(battVolts);
+        Serial.print(F("mV\t"));
+        Serial.print(F("Output Voltage: "));
+        Serial.print(supplyVolts);
+        Serial.print(F("mV\t"));
+        Serial.print(F("Current: "));
+        Serial.print(current);
+        Serial.print(F("mA\t"));
+        Serial.print(F("Avg Current: "));
+        Serial.print(avgCurrent.getAvg());
+        Serial.print(F("mA\t"));
+        Serial.print(F("Power: "));
+        Serial.print(outPower);
+        Serial.print(F("mW\t"));
+        Serial.print(F("Avg Power: "));
+        Serial.print(avgPowerOut.getAvg());
+        Serial.print(F("mW\t"));
+        Serial.println(PowerDrive.getDuty());
+    }
 }
 
 // cli manager
@@ -107,7 +151,8 @@ void manCli()
         Serial.println(F("responseTime <ms> :   determines update rate of output power control loop"));
         Serial.println(F("readInterv <ms>   :   sets interval between two readings"));
         Serial.println(F("dnd <on/off>      :   turn off all indicator lights except mains"));
-        Serial.println(F("PWMfreq <0-255>   :   sets switching frequency of the output driver"));
+        Serial.println(F("PWMfreq <1-5>     :   sets switching frequency of the output driver"));
+
         //Serial.println(F("setTime <hh:mm>   :   set local time"));
         //Serial.println(F("setPwrAvgTime     :   set sample space (minutes) for average power"));
         //Serial.println(F("setCurrAvgTime    :   set sample space (minutes) for average current"));
@@ -227,12 +272,12 @@ void manCli()
     }
 
     // update rate of output power control loop
-    else if((inputString.substring(0,15)).equalsIgnoreCase("responseTime"))
+    else if((inputString.substring(0,12)).equalsIgnoreCase("responseTime"))
     {
         uint8_t length = inputString.length();
-        float _responseTime = abs((inputString.substring(16,length).toInt()));
-        if(_responseTime < 3500 || _responseTime > 12000)
-            Serial.println(F("Valid Range: 3500 - 12000"));
+        float _responseTime = abs((inputString.substring(13,length).toInt()));
+        if(_responseTime < 3 || _responseTime > 100)
+            Serial.println(F("Valid Range: 3 - 100 ms"));
         else
         {
             PowerDrive.setResponseTime(_responseTime);
@@ -244,25 +289,43 @@ void manCli()
     else if((inputString.substring(0,10)).equalsIgnoreCase("readInterv"))
     {
         uint8_t length = inputString.length();
-        float _measureTimer = abs((inputString.substring(11,length).toInt()));
-        if(_measureTimer < 250)
-            Serial.println(F("Valid Range: Above 250 milliseconds"));
+        if((inputString.substring(11,length)).equalsIgnoreCase("realtime"))
+        {
+            while(!Serial.available())
+            {
+                measure(true);
+                PowerDrive.update();
+            }
+        }
         else
         {
-            measureTimer = _measureTimer;
-            Serial.println(F("Reading Interval Changed"));
+            float _measureTimer = abs((inputString.substring(11,length).toInt()));
+            if(_measureTimer < 250)
+                Serial.println(F("Valid Range: Above 250 milliseconds"));
+            else
+            {
+                measureTimer = _measureTimer;
+                Serial.println(F("Reading Interval Changed"));
+            }
         }
     }
 
     // set switching frequency
     else if((inputString.substring(0,7)).equalsIgnoreCase("PWMfreq"))
     {
-        Serial.println(F("Warning!\nChanging these values can result in unexpected instability.\nProceed with caution."));
-        Serial.println(F("High frequency ==> Decreased Efficiency, Increased Stability"));
-        Serial.println(F("Low frequency ==> Increased Efficiency, Decreased Stability"));
         uint8_t length = inputString.length();
-        int n = abs((inputString.substring(8,length)).toInt());
-        setupFastPWM(constrain(n, 0, 255));
+        if((inputString.substring(8,length)) == '?')
+        {
+            Serial.println(F("Warning!\nChanging these values can result in unexpected instability.\nProceed with caution."));
+            Serial.println(F("High frequency ==> Decreased Efficiency, Increased Stability"));
+            Serial.println(F("Low frequency ==> Increased Efficiency, Decreased Stability"));
+            Serial.println(F("1. 62.5 kHz\n2. 7.81 kHz\n3. 976.56 Hz\n4. 244.14 Hz\n5. 61.04 Hz"));
+        }
+        else
+        {
+            int n = abs((inputString.substring(8,length)).toInt());
+            setupFastPWM(constrain(n, 1, 5));
+        }
     }
 
     // dnd
@@ -274,12 +337,12 @@ void manCli()
         if((inputString.substring(4,length)).equalsIgnoreCase("on"))
         {
             PowerDrive.indicator(false);
-            Serial.println("DND Enabled");
+            Serial.println(F("DND Enabled"));
         }
         if((inputString.substring(4,length)).equalsIgnoreCase("off"))
         {
             PowerDrive.indicator(true);
-            Serial.println("DND Disabled");
+            Serial.println(F("DND Disabled"));
         }
     }
 
@@ -294,11 +357,16 @@ void manCli()
 void setup()
 {
     Serial.begin(115200);
-    pinMode(DEMANDIND, OUTPUT);
+    pinMode(CONSTVOLT, OUTPUT);
     pinMode(MOSPIN, OUTPUT);
-    setupFastPWM(0);
-    analogWrite(MOSPIN, 255);
+    setupFastPWM(1);
+    Serial.println(F("Preparing Buffers..."));
+    for(int i = 0; i < 64; i++)
+        measure(false);
     inputString.reserve(50);
+    Serial.println(F("Done"));
+    PowerDrive.setDuty(200);
+    PowerDrive.setPowerLimit(7000);
 }
 
 void loop()
@@ -311,7 +379,7 @@ void loop()
     }
     if(millis() - lastReadAt > measureTimer)
     {
-        measure();
+        measure(false);
         lastReadAt = millis();
     }
     PowerDrive.update();

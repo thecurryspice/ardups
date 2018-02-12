@@ -3,7 +3,7 @@
 class PowerDriver
 {
 private:
-    uint8_t pin, responseTime, drive;
+    uint8_t pin, responseTime, duty;
     uint64_t setPoint;
     int maxPower;
     bool showIndicator = true;
@@ -12,8 +12,22 @@ public:
     {
         pin = _pin;
         pinMode(pin, OUTPUT);
-        drive = 255;
+        duty = 255;
     }
+
+    uint8_t getDuty()
+    {
+        return duty;
+    }
+
+    // pwm duty
+    void setDuty(uint8_t _duty)
+    {
+        duty = _duty;
+        analogWrite(pin, duty);
+    }
+
+    // update the control loop
     void update()
     {
         if(!maxPower)
@@ -26,20 +40,20 @@ public:
             if(outPower > maxPower)
             {
                 if(showIndicator)
-                    digitalWrite(DEMANDIND, HIGH);
+                    digitalWrite(CONSTVOLT, HIGH);
                 // we don't want to lose CV condition, do we?
-                if(supplyVolts > 4800)
-                    drive--;
+                if(supplyVolts > 4900)
+                    duty--;
             }
             else
             {
                 // this is needed to ensure that sharp spikes can be provided after toning down the output.
                 // the (mos)drive values will keep oscillating between two points when limiting output power.
                 // as soon as the output power drops, drive gradually turns fully on.
-                digitalWrite(DEMANDIND, LOW);
-                drive = max(drive++,255);
+                digitalWrite(CONSTVOLT, LOW);
+                duty = max(duty++,255);
             }
-            MOSDRIVE(drive);
+            setDuty(duty);
             setPoint = millis();
         }
     }
@@ -53,7 +67,7 @@ public:
     // determines update rate of control loop
     void setResponseTime(float _responseTime)
     {
-        responseTime = constrain(_responseTime,5,100);
+        responseTime = constrain(_responseTime,3,100);
     }
 
     // whether to use indicator or not
