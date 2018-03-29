@@ -2,8 +2,8 @@
 class RollAvg
 {
 private:
-    uint8_t totalReadings = 64;
-    uint32_t readings[64];
+    uint8_t totalReadings = 16, currReading = 0;
+    uint32_t readings[16];
     uint32_t sumReadings = 0;
 public:
     // total
@@ -16,9 +16,11 @@ public:
     //void setValue(uint8_t _index, int value)
     void push(float value)
     {
-        for (int i = totalReadings-1; i > 0; i--)
-            readings[i] = readings[i-1];
-        readings[0] = value;
+        readings[currReading] = value;
+        currReading++;
+        // loop over if sample space is exceeded
+        if(currReading > totalReadings - 1)
+            currReading = 0;            
     }
     float getAvg()
     {

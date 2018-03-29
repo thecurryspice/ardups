@@ -19,10 +19,10 @@ public:
     {
         if(!timer)
             return;
-        if(millis() - setPoint > timer && !state)  // no toggling
+        if(millis() - setPoint > timer && !state)   // no toggling when state is checked
         {
-            return true;
             state = true;
+            return true;
         }
         else
         {
@@ -34,13 +34,20 @@ public:
     bool timeout()
     {
         if(!timer)
+            //default value is false
             return false;
         update();
         return state;
     }
 
+    void resetTimer()
+    {
+        timer = 0;
+    }
+
     void setTimer(unsigned long _timer)
     {
+        state = false;
         timer = _timer;
         setPoint = millis();
     }

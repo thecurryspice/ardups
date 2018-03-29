@@ -5,7 +5,7 @@
 
 int current, battVolts, supplyVolts, battCurrent, measureTimer = 1000;
 uint64_t lastReadAt = 0;
-float outPower, maxPower;
+float outPower, maxPower = 7000;
 String inputString = "";
 boolean stringComplete, mainsOn;
 
@@ -71,6 +71,44 @@ void setupFastPWM(uint16_t n)
     Serial.println(" Hz");
     // give some time for PWM to stabilise
     delay(1);
+}
+
+// extracts configuration state
+void config()
+{
+    // shutdown schedule
+    uint64_t timeToSD = shutdown.ticksLeft();
+    //Serial.println(timeToSD);
+    // for storing output message
+    String outString;
+    if(timeToSD)
+    {
+        int hrs = timeToSD/3600000;
+        int mins = (timeToSD % 3600000)/60000;
+        int secs = (timeToSD % 60000)/1000;
+        int ms = timeToSD % 1000;
+        outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
+    }
+    Serial.print(F("Shutdown: "));
+    Serial.print((timeToSD == 0) ?"Not Scheduled\n":outString);
+    // startup schedule
+    uint64_t timeToSU = startup.ticksLeft();
+    if(timeToSU)
+    {
+        int hrs = timeToSU/3600000;
+        int mins = (timeToSU % 3600000)/60000;
+        int secs = (timeToSU % 60000)/1000;
+        int ms = timeToSU % 1000;
+        outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
+    }
+    Serial.print(F("Startup: "));
+    Serial.print((timeToSU == 0) ?"Not Scheduled\n":outString);
+    // measure interval
+    Serial.print(F("Monitoring Interval: "));
+    Serial.print(measureTimer);
+    Serial.print(F(" ms\nPower Limiting: "));
+    // Power limiting
+    Serial.println((maxPower)?("Enabled: ")+String(maxPower)+(" mW"):"Disabled");
 }
 
 // will run after every loop
@@ -186,46 +224,12 @@ void manCli()
     {
         avgPowerOut.reset();
         avgCurrent.reset();
+        Serial.println("All buffers cleared");
     }
 
     // config
     else if(inputString.equalsIgnoreCase("config"))
-    {
-        // shutdown schedule
-        uint64_t timeToSD = shutdown.ticksLeft();
-        //Serial.println(timeToSD);
-        // for storing output message
-        String outString;
-        if(timeToSD)
-        {
-            int hrs = timeToSD/3600000;
-            int mins = (timeToSD % 3600000)/60000;
-            int secs = (timeToSD % 60000)/1000;
-            int ms = timeToSD % 1000;
-            outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
-        }
-        Serial.print(F("Shutdown: "));
-        Serial.print((timeToSD == 0) ?"Not Scheduled\n":outString);
-        // startup schedule
-        uint64_t timeToSU = startup.ticksLeft();
-        timeToSU += timeToSD;
-        if(timeToSU)
-        {
-            int hrs = timeToSU/3600000;
-            int mins = (timeToSU % 3600000)/60000;
-            int secs = (timeToSU % 60000)/1000;
-            int ms = timeToSU % 1000;
-            outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
-        }
-        Serial.print(F("Startup: "));
-        Serial.print((timeToSU == 0) ?"Not Scheduled\n":outString);
-        // measure interval
-        Serial.print(F("Monitoring Interval: "));
-        Serial.print(measureTimer);
-        Serial.print(F(" ms\nPower Limiting: "));
-        // Power limiting
-        Serial.println((maxPower)?("Enabled: ")+String(maxPower)+(" mW"):"Disabled");
-    }
+        {config();}
 
     // shutdown
     else if((inputString.substring(0,8)).equalsIgnoreCase("shutdown"))
@@ -233,8 +237,16 @@ void manCli()
         uint64_t secs = 0;
         uint8_t length = inputString.length();
         secs = abs((inputString.substring(9,length)).toInt());
-        shutdown.setTimer(1000*secs);
-        Serial.println("Shutdown timer set");
+        if(!secs)
+        {
+            shutdown.resetTimer();
+            Serial.println("Shutdown timer cleared");
+        }
+        else
+        {
+            shutdown.setTimer(1000*secs);
+            Serial.println(F("Shutdown timer set"));
+        }
     }
 
     // startup
@@ -245,8 +257,16 @@ void manCli()
         {
             uint8_t length = inputString.length();
             uint64_t secs = abs((inputString.substring(8,length).toInt()));
-            startup.setTimer(1000*secs + shutdown.ticksLeft());
-            Serial.println(F("Startup timer set"));
+            if(!secs)
+            {
+                startup.resetTimer();
+                Serial.println(F("Startup timer cleared"));
+            }
+            else
+            {
+                startup.setTimer(1000*secs + shutdown.ticksLeft());
+                Serial.println(F("Startup timer set"));
+            }
         }
         else
             Serial.println(F("Set Shutdown timer first"));
@@ -261,9 +281,11 @@ void manCli()
         {
             PowerDrive.setPowerLimit(12000);
             Serial.println(F("Output Power Limit Disabled"));
+            maxPower = 0;
         }
         else if(_maxPower >= 3000 && _maxPower <= 12000)
         {
+            maxPower = _maxPower;
             PowerDrive.setPowerLimit(_maxPower);
             Serial.println(F("Output Power Limit Enabled"));
         }
@@ -356,17 +378,20 @@ void manCli()
 
 void setup()
 {
-    Serial.begin(115200);
     pinMode(CONSTVOLT, OUTPUT);
     pinMode(MOSPIN, OUTPUT);
     setupFastPWM(1);
+    PowerDrive.setDuty(0);
+    Serial.begin(115200);
     Serial.println(F("Preparing Buffers..."));
     for(int i = 0; i < 64; i++)
         measure(false);
     inputString.reserve(50);
-    Serial.println(F("Done"));
+    Serial.println(F("Done\nPowering up..."));
     PowerDrive.setDuty(200);
-    PowerDrive.setPowerLimit(7000);
+    PowerDrive.setPowerLimit(maxPower);
+    Serial.println(F("Done"));
+    config();
 }
 
 void loop()
@@ -383,6 +408,33 @@ void loop()
         lastReadAt = millis();
     }
     PowerDrive.update();
+    if(shutdown.timeout())
+    {
+        Serial.println(F("Shutting Down Power..."));
+        PowerDrive.setDuty(0);
+        Serial.println(F("Done"));
+        shutdown.resetTimer();
+        // find timeToSU
+        uint64_t timeToSU = startup.ticksLeft();
+        String outString;
+        if(timeToSU)
+        {
+            int hrs = timeToSU/3600000;
+            int mins = (timeToSU % 3600000)/60000;
+            int secs = (timeToSU % 60000)/1000;
+            int ms = timeToSU % 1000;
+            outString = "Scheduled at "+String(hrs)+" hours, "+String(mins)+" minutes, "+String(secs)+"."+String(ms)+" seconds from now\n";
+        }
+        // display timeToSU
+        Serial.print(F("Startup: "));
+        Serial.print((timeToSU == 0) ?"Not Scheduled\n":outString);
+        while(!startup.timeout());
+        startup.resetTimer();
+        Serial.println(F("Powering up..."));
+        PowerDrive.setDuty(200);
+        Serial.println(F("Done"));
+        config();
+    }
     inputString = "";
     stringComplete = false;
     serialEvent();
