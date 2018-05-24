@@ -7,7 +7,7 @@ int current, battVolts, supplyVolts, battCurrent, measureTimer = 1000;
 uint64_t lastReadAt = 0;
 float outPower, maxPower = 7000;
 String inputString = "";
-boolean stringComplete, mainsOn;
+boolean stringComplete, mainsOn, dnd = false;
 
 // default Timer params
 Timer shutdown(0);
@@ -109,6 +109,11 @@ void config()
     Serial.print(F(" ms\nPower Limiting: "));
     // Power limiting
     Serial.println((maxPower)?("Enabled: ")+String(maxPower)+(" mW"):"Disabled");
+    Serial.print(F("Response Time: "));
+    Serial.print(PowerDrive.getResponseTime());
+    Serial.print(" ms\nDND: ");
+    Serial.println((dnd)?"Enabled":"Disabled");
+
 }
 
 // will run after every loop
@@ -190,6 +195,7 @@ void manCli()
         Serial.println(F("readInterv <ms>   :   sets interval between two readings"));
         Serial.println(F("dnd <on/off>      :   turn off all indicator lights except mains"));
         Serial.println(F("PWMfreq <1-5>     :   sets switching frequency of the output driver"));
+        Serial.println(F("PDout <on/off>    :   outputs realtime data of the output driver"));
 
         //Serial.println(F("setTime <hh:mm>   :   set local time"));
         //Serial.println(F("setPwrAvgTime     :   set sample space (minutes) for average power"));
@@ -240,7 +246,12 @@ void manCli()
         if(!secs)
         {
             shutdown.resetTimer();
-            Serial.println("Shutdown timer cleared");
+            Serial.println(F("Shutdown timer cleared"));
+            if(startup.ticksLeft())
+            {
+                startup.resetTimer();
+                Serial.println(F("Startup timer cleared"));
+            }
         }
         else
         {
@@ -340,7 +351,7 @@ void manCli()
         {
             Serial.println(F("Warning!\nChanging these values can result in unexpected instability.\nProceed with caution."));
             Serial.println(F("High frequency ==> Decreased Efficiency, Increased Stability"));
-            Serial.println(F("Low frequency ==> Increased Efficiency, Decreased Stability"));
+            Serial.println(F("Low frequency  ==> Increased Efficiency, Decreased Stability"));
             Serial.println(F("1. 62.5 kHz\n2. 7.81 kHz\n3. 976.56 Hz\n4. 244.14 Hz\n5. 61.04 Hz"));
         }
         else
@@ -358,14 +369,26 @@ void manCli()
         uint8_t length = inputString.length();
         if((inputString.substring(4,length)).equalsIgnoreCase("on"))
         {
+            dnd = true;
             PowerDrive.indicator(false);
             Serial.println(F("DND Enabled"));
         }
         if((inputString.substring(4,length)).equalsIgnoreCase("off"))
         {
+            dnd = false;
             PowerDrive.indicator(true);
             Serial.println(F("DND Disabled"));
         }
+    }
+
+    // monitor PD
+    else if((inputString.substring(0,5)).equalsIgnoreCase("PDout"))
+    {
+        uint8_t length = inputString.length();
+        if((inputString.substring(6,length)).equalsIgnoreCase("on"))
+            PowerDrive.setPowerDriveReadings(true);
+        if((inputString.substring(6,length)).equalsIgnoreCase("off"))
+            PowerDrive.setPowerDriveReadings(false);
     }
 
     // default
